@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag_vector_db
+    ports:
+      - "6333:6333"  # HTTP API port for your Next.js backend to connect to
+      - "6334:6334"  # gRPC port (optional, for high-performance connections)
+    volumes:
+      - qdrant_storage:/qdrant/storage  # Persists your crawled website data
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
