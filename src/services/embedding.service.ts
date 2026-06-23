@@ -6,6 +6,7 @@ export interface GeneratedVector {
     text: string;
     url: string;
     pageTitle: string;
+    domain: string;
   };
 }
 
@@ -47,12 +48,20 @@ export class EmbeddingService {
 
         if (response.data && response.data.length === batch.length) {
           for (let j = 0; j < batch.length; j++) {
+            let domain = '';
+            try {
+              domain = new URL(batch[j].url).hostname;
+            } catch {
+              domain = '';
+            }
+
             results.push({
               vector: response.data[j].embedding,
               payload: {
                 text: batch[j].text,
                 url: batch[j].url,
                 pageTitle: batch[j].pageTitle,
+                domain,
               },
             });
           }
