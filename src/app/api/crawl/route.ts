@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CrawlerService } from '@/services/crawler.service';
 import { ChunkerService } from '@/services/chunker.service';
 import { EmbeddingService } from '@/services/embedding.service';
+import { QdrantService } from '@/services/qdrant.service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,8 +29,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate target URL format
+    let parsedUrl: URL;
     try {
-      new URL(url);
+      parsedUrl = new URL(url);
     } catch {
       return NextResponse.json(
         { success: false, error: 'The provided target URL is invalid.' },
@@ -37,7 +39,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Orchestration pipeline (Crawler -> Chunker -> Embedder)
+    const domain = parsedUrl.hostname;
+
+    // 2. Orchestration pipeline (Crawler -> Chunker -> Embedder -> Qdrant)
     console.log(`[API] Starting ingestion pipeline for URL: ${url}`);
     
     // Step A: Crawl
@@ -52,12 +56,19 @@ export async function POST(request: NextRequest) {
     const vectors = await EmbeddingService.generateVectors(chunks);
     console.log(`[API] Embedding generation completed. Generated ${vectors.length} vectors.`);
 
-    // 3. Return final vectors and payloads
-    return NextResponse.json({
+    // Step D: Initialize collection
+    await QdrantService.initializeCollection('website_chunks');
+
+    // Step E: Upsert vectors
+    await QdrantService.upsertVectors('website_chunks', vectors);
+    console.log(`[API] Vector database indexing completed for domain: ${domain}`);
+
+    // 3. Return high-level success summary
+    return Response.json({
       success: true,
-      url,
-      total_chunks: chunks.length,
-      data: vectors,
+      message: "Ingestion pipeline completed successfully.",
+      domain,
+      total_chunks_indexed: vectors.length,
     });
 
   } catch (error: any) {
