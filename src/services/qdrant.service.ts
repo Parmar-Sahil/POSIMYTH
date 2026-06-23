@@ -100,4 +100,46 @@ export class QdrantService {
       );
     }
   }
+
+  /**
+   * Searches the Qdrant collection for vectors similar to the query vector,
+   * enforcing a strict domain tenancy filter.
+   */
+  public static async searchSimilarVectors(
+    collectionName: string,
+    vector: number[],
+    domain: string,
+    limit = 4
+  ): Promise<Array<{ id: string | number; score: number; payload: any }>> {
+    const client = this.getClient();
+    try {
+      console.log(`[QdrantService] Searching similar vectors in "${collectionName}" filtered by domain: "${domain}"...`);
+      const results = await client.search(collectionName, {
+        vector,
+        limit,
+        filter: {
+          must: [
+            {
+              key: 'domain',
+              match: {
+                value: domain,
+              },
+            },
+          ],
+        },
+        with_payload: true,
+      });
+
+      return results.map((r) => ({
+        id: r.id,
+        score: r.score,
+        payload: r.payload,
+      }));
+    } catch (error: any) {
+      console.error(`[QdrantService] Error searching similar vectors in collection "${collectionName}":`, error);
+      throw new Error(
+        `Failed to search similar vectors in Qdrant: ${error.message || error}. Please ensure the local Qdrant Docker container is running.`
+      );
+    }
+  }
 }
