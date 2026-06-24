@@ -1,21 +1,49 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import crypto from 'crypto';
 
+// Prevent multiple instances of QdrantClient in development due to Next.js Hot Module Replacement (HMR)
+const globalForQdrant = globalThis as unknown as {
+  qdrantClient: QdrantClient | undefined;
+};
+
 export class QdrantService {
-  private static client: QdrantClient | null = null;
+  private static clientInstance: QdrantClient | null = null;
+  private static initializedCollections = new Set<string>();
+
+  /**
+   * Instantiates and configures a new QdrantClient.
+   */
+  private static createClient(): QdrantClient {
+    const url = process.env.QDRANT_URL;
+    if (!url) {
+      throw new Error('QDRANT_URL is not configured in process.env.');
+    }
+
+    const apiKey = process.env.QDRANT_API_KEY && process.env.QDRANT_API_KEY.trim() !== ''
+      ? process.env.QDRANT_API_KEY
+      : undefined;
+
+    console.log(`[QdrantService] Initializing QdrantClient targeting: ${url} (Authentication: ${apiKey ? 'Enabled' : 'Disabled'})`);
+
+    return new QdrantClient({ url, apiKey });
+  }
 
   /**
    * Returns a singleton instance of the QdrantClient.
+   * Leverages globalThis in non-production environments to prevent socket exhaustion.
    */
   private static getClient(): QdrantClient {
-    if (!this.client) {
-      const url = process.env.QDRANT_URL;
-      if (!url) {
-        throw new Error('QDRANT_URL is not configured in process.env.');
+    if (process.env.NODE_ENV === 'production') {
+      if (!this.clientInstance) {
+        this.clientInstance = this.createClient();
       }
-      this.client = new QdrantClient({ url });
+      return this.clientInstance;
+    } else {
+      if (!globalForQdrant.qdrantClient) {
+        globalForQdrant.qdrantClient = this.createClient();
+      }
+      return globalForQdrant.qdrantClient;
     }
-    return this.client;
   }
 
   /**
@@ -23,6 +51,9 @@ export class QdrantService {
    * Configures vectors payload setting size to 3072 and distance metric to 'Cosine'.
    */
   public static async initializeCollection(collectionName: string): Promise<void> {
+    if (this.initializedCollections.has(collectionName)) {
+      return;
+    }
     const client = this.getClient();
     try {
       console.log(`[QdrantService] Checking if collection "${collectionName}" exists...`);
@@ -41,13 +72,23 @@ export class QdrantService {
       } else {
         console.log(`[QdrantService] Collection "${collectionName}" already exists.`);
       }
+
+      // Ensure that the domain index exists to support tenant-isolated filtering in strict mode (e.g. Qdrant Cloud)
+      console.log(`[QdrantService] Ensuring payload keyword index on "domain" is present for collection "${collectionName}"...`);
+      await client.createPayloadIndex(collectionName, {
+        field_name: 'domain',
+        field_schema: 'keyword',
+      });
+      console.log(`[QdrantService] Payload index on "domain" verified successfully.`);
+
+      this.initializedCollections.add(collectionName);
     } catch (error: any) {
       console.error(
         `[QdrantService] Error connecting to Qdrant or initializing collection "${collectionName}":`,
         error
       );
       throw new Error(
-        `Failed to initialize Qdrant collection: ${error.message || error}. Please ensure the local Qdrant Docker container is running.`
+        `Failed to initialize Qdrant collection: ${error.message || error}. Please ensure Qdrant is running and accessible at the configured URL.`
       );
     }
   }
@@ -73,6 +114,7 @@ export class QdrantService {
       return;
     }
 
+    await this.initializeCollection(collectionName);
     const client = this.getClient();
     try {
       console.log(`[QdrantService] Transforming and upserting ${points.length} points to "${collectionName}"...`);
@@ -96,7 +138,7 @@ export class QdrantService {
     } catch (error: any) {
       console.error(`[QdrantService] Error upserting vectors to collection "${collectionName}":`, error);
       throw new Error(
-        `Failed to upsert vectors to Qdrant: ${error.message || error}. Please ensure the local Qdrant Docker container is running.`
+        `Failed to upsert vectors to Qdrant: ${error.message || error}. Please ensure Qdrant is running and accessible at the configured URL.`
       );
     }
   }
@@ -111,6 +153,7 @@ export class QdrantService {
     domain: string,
     limit = 4
   ): Promise<Array<{ id: string | number; score: number; payload: any }>> {
+    await this.initializeCollection(collectionName);
     const client = this.getClient();
     try {
       console.log(`[QdrantService] Searching similar vectors in "${collectionName}" filtered by domain: "${domain}"...`);
@@ -138,7 +181,7 @@ export class QdrantService {
     } catch (error: any) {
       console.error(`[QdrantService] Error searching similar vectors in collection "${collectionName}":`, error);
       throw new Error(
-        `Failed to search similar vectors in Qdrant: ${error.message || error}. Please ensure the local Qdrant Docker container is running.`
+        `Failed to search similar vectors in Qdrant: ${error.message || error}. Please ensure Qdrant is running and accessible at the configured URL.`
       );
     }
   }
